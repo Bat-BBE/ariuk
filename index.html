@@ -1298,7 +1298,7 @@
       const canvas = $("#c");
       const renderer = new THREE.WebGLRenderer({
         canvas,
-        antialias: true,
+        antialias: (devicePixelRatio || 1) < 2, // 📱 өндөр нягтралтай утсан дээр шаардлагагүй, хурд нэмнэ
         powerPreference: "high-performance",
       });
       renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
@@ -5234,8 +5234,8 @@
       const SAVE_KEY = "ariuk-world-v2";
       let saved = {};
       try { saved = JSON.parse(store.get(SAVE_KEY, "{}")) || {}; } catch (e) {}
-      const G = Object.assign({ visits: 0, read: [], mute: false, glasses: false, done: {}, claimed: {}, finale: "", finaleSeen: false }, saved);
-      G.read = G.read || []; G.done = G.done || {}; G.claimed = G.claimed || {};
+      const G = Object.assign({ visits: 0, read: [], mute: false, glasses: false, done: {}, claimed: {}, finale: "", finaleSeen: false, fails: {} }, saved);
+      G.read = G.read || []; G.done = G.done || {}; G.claimed = G.claimed || {}; G.fails = G.fails || {};
       const save = () => store.set(SAVE_KEY, JSON.stringify(G));
 
       /* ═════════════════════════ 🎁 БЭЛЭГНҮҮД (сорилт бүрт нэг) ═════════════════════════ */
@@ -5513,16 +5513,23 @@
         danceT = setInterval(() => { const n = mel[i % 16], b = bass[(i >> 1) % 8]; tone(523 * 2 ** (n / 12), 523 * 2 ** (n / 12), 0.18, "triangle", 0.06); if (i % 2 === 0) tone(131 * 2 ** (b / 12), 131 * 2 ** (b / 12), 0.25, "sine", 0.12); i++; }, ms);
       }
       const timeLeft = (t0, lim) => Math.max(0, Math.ceil(lim - (T - t0)));
+      // 📈 хүндрэл: 0 (эхний сорилт) → 1 (сүүлийнх). ASSIST: Б.Эрдэнээс сануулга авсны дараа хялбарчилна
+      let ASSIST = 0;
+      const lvl = () => clamp(doneCount() / (CH.length - 1), 0, 1);
+      const D2 = (easy, hard) => Math.round(lerp(easy, hard, lvl()));
+      const gA = (g) => (ASSIST ? Math.max(1, Math.ceil(g * 0.6)) : g);
+      const lA = (l) => (ASSIST ? l * 1.5 : l);
+      const spd = (k) => (ASSIST ? 0.75 : 1) * (1 + lvl() * k);
 
       /* ═════════════════════════ 🎯 12 СОРИЛТ ═════════════════════════ */
       // 1. 🍪 күүки барих: дэлгэц дарахад Б.Эрдэнэ тийш гүйнэ
       function makeCookie() { const g = new THREE.Group(); g.add(outlined(new THREE.CylinderGeometry(0.2, 0.2, 0.08, 18), toon("#d9a066"), 1.12)); for (let i = 0; i < 5; i++) { const c = new THREE.Mesh(new THREE.SphereGeometry(0.032, 6, 5), toon("#5a3420")); c.position.set(rand(-0.12, 0.12), 0.045, rand(-0.12, 0.12)); g.add(c); } g.rotation.x = 1.25; scene.add(g); sceneObjs.push(g); return g; }
       async function gCookie(w) {
         walkZ(A, -1.8, 0.8); A.faceMode = "cam"; B.walkTo(0, 2); B.faceMode = "cam";
-        const goal = 8, lim = 22, t0 = T; let score = 0, last = -9; const ck = [];
+        const goal = gA(D2(6, 10)), lim = lA(22), t0 = T, gap = lerp(1.05, 0.7, lvl()); let score = 0, last = -9; const ck = [];
         sceneTap = (x, y) => { const p = screenToPlane(x, y); if (p) { B.walkTo(clamp(p.x, -halfW + 0.4, halfW - 0.4), 4.2); } };
         while (T - t0 < lim && score < goal) {
-          if (T - last > 0.95) { last = T; const m = makeCookie(); ck.push({ m, x: rand(-halfW + 0.5, halfW - 0.5), y: 5.5, v: rand(1.8, 2.6) }); }
+          if (T - last > gap) { last = T; const m = makeCookie(); ck.push({ m, x: rand(-halfW + 0.5, halfW - 0.5), y: 5.5, v: rand(1.8, 2.6) * spd(0.6) }); }
           for (let i = ck.length - 1; i >= 0; i--) {
             const c = ck[i]; c.y -= c.v * 0.05; c.m.position.set(c.x, c.y, 0.3); c.m.rotation.z += 0.1;
             if (c.y < 2.6 && c.y > 1.2 && Math.abs(c.x - B.x) < 0.6) { score++; voc(B, "nom"); fx(B, "😋"); B.squash(-3); scene.remove(c.m); ck.splice(i, 1); if (score % 3 === 0) A.say(pick(["Ваа~ 😆", "Дахиад! 🍪", "Сайн байна! 👏"]), "happy"); }
@@ -5536,8 +5543,8 @@
       // 2. 🦟 шумуул алах
       async function gMosquito(w) {
         B.walkTo(0, 1.6); A.walkTo(halfW - 0.45, 1.6); B.faceMode = "cam"; await w(600);
-        const goal = 7, lim = 18, t0 = T; let score = 0; const ms = [];
-        const spawn = () => { const el = gEl("🦟", 0, 0, 58); const m = { el, a: rand(0, 6), r: rand(50, 110), s: rand(1.6, 2.8), dead: false }; el.addEventListener("pointerdown", (e) => { e.stopPropagation(); if (m.dead) return; m.dead = true; score++; el.innerHTML = "💥"; buzz(20); sfx.bonk(); setTimeout(() => el.remove(), 260); if (score % 2) B.say(pick(["Баярлалаа! 😭", "Өө тэр байна! 👉", "Загатнаж байна 😣"]), "shocked"); }); ms.push(m); };
+        const goal = gA(D2(5, 9)), lim = lA(18), t0 = T; let score = 0; const ms = [];
+        const spawn = () => { const el = gEl("🦟", 0, 0, 58); const m = { el, a: rand(0, 6), r: rand(50, 110), s: rand(1.6, 2.8) * spd(0.7), dead: false }; el.addEventListener("pointerdown", (e) => { e.stopPropagation(); if (m.dead) return; m.dead = true; score++; el.innerHTML = "💥"; buzz(20); sfx.bonk(); setTimeout(() => el.remove(), 260); if (score % 2) B.say(pick(["Баярлалаа! 😭", "Өө тэр байна! 👉", "Загатнаж байна 😣"]), "shocked"); }); ms.push(m); };
         spawn(); spawn();
         while (T - t0 < lim && score < goal) {
           const h = headScreen(B, 0.2);
@@ -5552,9 +5559,9 @@
       // 3. 🎈 бөмбөлөг хагалах
       async function gBalloon(w) {
         for (const c of CHARS) { c.faceMode = "cam"; c.headNod = -0.3; }
-        const goal = 10, lim = 16, t0 = T; let score = 0, last = -9; const bs = [];
+        const goal = gA(D2(8, 14)), lim = lA(16), t0 = T; let score = 0, last = -9; const bs = [];
         while (T - t0 < lim && score < goal) {
-          if (T - last > 0.55) { last = T; const el = gEl(pick(["🎈", "🎈", "🎈", "💖"]), 0, 0, 72); const b = { el, x: rand(40, innerWidth - 40), y: innerHeight + 40, v: rand(2.2, 3.6), ph: rand(0, 6), dead: false }; el.addEventListener("pointerdown", (e) => { e.stopPropagation(); if (b.dead) return; b.dead = true; score++; el.innerHTML = "💥"; sfx.pop(); buzz(12); setTimeout(() => el.remove(), 240); }); bs.push(b); }
+          if (T - last > 0.55) { last = T; const el = gEl(pick(["🎈", "🎈", "🎈", "💖"]), 0, 0, 72); const b = { el, x: rand(40, innerWidth - 40), y: innerHeight + 40, v: rand(2.2, 3.6) * spd(0.6), ph: rand(0, 6), dead: false }; el.addEventListener("pointerdown", (e) => { e.stopPropagation(); if (b.dead) return; b.dead = true; score++; el.innerHTML = "💥"; sfx.pop(); buzz(12); setTimeout(() => el.remove(), 240); }); bs.push(b); }
           for (const b of bs) if (!b.dead) { b.y -= b.v * 3; place(b.el, b.x + Math.sin(T * 2 + b.ph) * 14, b.y, 72); if (b.y < -60) { b.dead = true; b.el.remove(); } }
           ghOn(`🎈 ${score} / ${goal} · ⏱ ${timeLeft(t0, lim)}`);
           await w(30);
@@ -5564,11 +5571,12 @@
       // 4. ✊ хайч-чулуу-даавуу (3 ялалт)
       async function gRps(w) {
         const d = dirTo(B, A); B.faceMode = "look"; A.faceMode = "look"; B.pose("fist"); A.pose("fist");
-        await w(B.say("3 удаа түрүүлж ялсан нь ялна! 😏", "smug"));
+        const need = ASSIST ? 1 : D2(2, 3);
+        await w(B.say(`${need} удаа түрүүлж ялсан нь ялна! 😏`, "smug"));
         let me = 0, him = 0; const H3 = ["✊", "✋", "✌️"];
-        while (me < 3 && him < 3) {
+        while (me < need && him < 3) {
           ghOn(`${esc(HER)} ${me} : ${him} ${esc(HIM)}`);
-          const ah = await ask(w, H3, true), bh = Math.floor(Math.random() * 3);
+          const ah = await ask(w, H3, true), bh = ASSIST && Math.random() < 0.65 ? 0 : Math.floor(Math.random() * 3);
           for (const word of ["Хайч!", "Чулуу!", "Даавуу!"]) { for (const c of CHARS) { c.pose("fistUp"); c.hop(2.5); } B.say(word, "neutral", 420); await w(260); for (const c of CHARS) c.pose("fist"); await w(220); }
           for (const c of CHARS) c.pose("give");
           fx(A, H3[ah], 1, { size: 46, dy: -40, dx: 0, dur: 1500 }); fx(B, H3[bh], 1, { size: 46, dy: -40, dx: 0, dur: 1500 });
@@ -5580,7 +5588,7 @@
           for (const c of CHARS) c.pose("fist");
         }
         ghOn(`${esc(HER)} ${me} : ${him} ${esc(HIM)}`);
-        return me >= 3;
+        return me >= need;
       }
       // 5. 🧠 оньсого
       const RIDDLES = [
@@ -5594,17 +5602,17 @@
       ];
       async function gRiddle(w) {
         for (const c of CHARS) c.faceMode = "cam";
-        const pool = [...RIDDLES].sort(() => Math.random() - 0.5); let ok = 0, tries = 0;
-        while (ok < 3 && tries < 6 && pool.length) {
+        const pool = [...RIDDLES].sort(() => Math.random() - 0.5), need = ASSIST ? 1 : D2(2, 3); let ok = 0, tries = 0;
+        while (ok < need && tries < 6 && pool.length) {
           const [q, opts, ans] = pool.shift(); tries++;
-          ghOn(`🧠 ${ok} / 3 зөв`);
+          ghOn(`🧠 ${ok} / ${need} зөв`);
           B.pose("point"); B.say(`🤔 ${q}`, "smug", 60000); await w(1300);
-          const a = await ask(w, opts); B.pose("idle");
+          const a = await ask(w, ASSIST ? opts.map((o, i) => (i === ans ? "👉 " + o : o)) : opts); B.pose("idle");
           if (a === ans) { ok++; chime(990); voc(B, "wow"); fx(A, "✨", 3); await w(B.say(pick(["Зөв!! 🤩", "Яаж мэдсэн юм бэ?! 😳", "Ухаалаг юм аа 🤓"]), "happy")); }
           else { sfx.boop(); voc(B, "laugh"); await w(B.say(`Хэхэ, буруу 😜 Хариу нь: ${opts[ans]}`, "smug")); }
         }
-        ghOn(`🧠 ${ok} / 3 зөв`);
-        return ok >= 3;
+        ghOn(`🧠 ${ok} / ${need} зөв`);
+        return ok >= need;
       }
       // 6. 🃏 хос зураг
       async function gMemory(w) {
@@ -5612,7 +5620,7 @@
         const E6 = ["🌸", "🍦", "🧋", "🐱", "🌙", "💖"], deck = [...E6, ...E6].sort(() => Math.random() - 0.5);
         const box = document.createElement("div"); box.className = "mcards"; gw().appendChild(box);
         const cards = deck.map((e) => { const el = document.createElement("div"); el.className = "mc"; el.innerHTML = `<span>${e}</span>`; box.appendChild(el); return { e, el, up: false, ok: false }; });
-        let open = [], pairs = 0, lock = false; const lim = 50, t0 = T;
+        let open = [], pairs = 0, lock = false; const lim = lA(D2(60, 42)); let t0 = T;
         cards.forEach((c) => c.el.addEventListener("pointerdown", (ev) => {
           ev.stopPropagation(); if (lock || c.up || c.ok) return;
           c.up = true; c.el.classList.add("up"); sfx.pop(); open.push(c);
@@ -5622,6 +5630,7 @@
             else setTimeout(() => { a.up = b.up = false; a.el.classList.remove("up"); b.el.classList.remove("up"); open = []; lock = false; }, 750);
           }
         }));
+        if (ASSIST) { lock = true; cards.forEach((c) => c.el.classList.add("up")); await w(2200); cards.forEach((c) => c.el.classList.remove("up")); lock = false; t0 = T; }
         while (T - t0 < lim && pairs < 6) { ghOn(`🃏 ${pairs} / 6 · ⏱ ${timeLeft(t0, lim)}`); await w(100); }
         await w(500);
         return pairs >= 6;
@@ -5631,14 +5640,14 @@
         for (const c of CHARS) c.faceMode = "cam";
         let ok = 0;
         for (let round = 0; round < 3; round++) {
-          ghOn(`🥤 ${ok} / 2 зөв · ${round + 1}-р тойрог`);
+          ghOn(`🥤 ${ok} / ${ASSIST ? 1 : 2} зөв · ${round + 1}-р тойрог`);
           const wrap = document.createElement("div"); wrap.className = "cups"; gw().appendChild(wrap);
           const X = [0, 107, 214], gl = document.createElement("div"); gl.className = "gl"; gl.textContent = "🤓"; wrap.appendChild(gl);
           const cups = [0, 1, 2].map((i) => { const c = document.createElement("div"); c.className = "cup up"; c.textContent = "🥤"; c.style.left = X[i] + "px"; wrap.appendChild(c); return { el: c, pos: i }; });
           const hasG = cups[1]; gl.style.left = X[1] + "px";
           await w(B.say(round ? "Дахиад! Илүү хурдан 😏" : "Шилийг хаана нуухыг хараарай 👀", "smug"));
           for (const c of cups) c.el.classList.remove("up"); await w(500); gl.style.opacity = 0;
-          const n = 5 + round * 2, spd = 0.38 - round * 0.08;
+          const n = (ASSIST ? 3 : D2(4, 7)) + round * 2, spd = Math.max(0.14, (0.4 - round * 0.07 - lvl() * 0.1) * (ASSIST ? 1.7 : 1));
           for (const c of cups) c.el.style.transitionDuration = spd + "s";
           for (let k = 0; k < n; k++) {
             const a = cups[Math.floor(Math.random() * 3)], b = pick(cups.filter((c) => c !== a));
@@ -5651,15 +5660,15 @@
           gl.style.left = X[hasG.pos] + "px"; gl.style.opacity = 1; pk.el.classList.add("up"); hasG.el.classList.add("up");
           if (pk === hasG) { ok++; chime(990); await w(B.say(pick(["Олчихлоо! 🤩", "Нүд хурц юм аа 👀"]), "happy")); }
           else { sfx.sad(); await w(B.say("Хэхэ, энд байсан 😜", "smug")); }
-          wrap.remove(); if (ok >= 2) break;
+          wrap.remove(); if (ok >= (ASSIST ? 1 : 2)) break;
         }
-        return ok >= 2;
+        return ok >= (ASSIST ? 1 : 2);
       }
       // 8. 🏃 гүйж буй Б.Эрдэнийг барих
       async function gTag(w) {
         walkZ(A, -1.8, 0.8); A.faceMode = "cam";
         await w(B.say("Намайг барьж чадахгүй ээ~ 😜", "smug"));
-        const goal = 8, lim = 18, t0 = T; let score = 0, next = 0, sp = 3;
+        const goal = gA(D2(6, 10)), lim = lA(18), t0 = T; let score = 0, next = 0, sp = ASSIST ? 2.2 : 3 + lvl() * 1.5;
         sceneTap = (x, y) => {
           const h = pickAt(x, y);
           if (h && h.ch === B) { score++; sp += 0.35; B.hop(5); B.squash(-4); sfx.boop(); buzz(15); fx(B, pick(["💥", "😆", "👉"])); B.say(pick(["Ай! 😆", "Гижигтэй! 😂", "Үгүй ээ! 🏃", "Хурдан юм аа! 😱"]), "shocked", 700); next = 0; }
@@ -5676,7 +5685,7 @@
       async function gShy(w) {
         B.walkTo(0, 1.6); walkZ(A, -1.8, 0.8); B.faceMode = "cam"; A.faceMode = "cam";
         await w(B.say("Би огт ичдэггүй шүү 😎", "smug"));
-        const goal = 4, lim = 20, t0 = T; let held = false, acc = 0, ht = 0;
+        const goal = ASSIST ? 2 : D2(3, 5), lim = lA(20), t0 = T; let held = false, acc = 0, ht = 0;
         const hand = $("#hand");
         sceneDown = (x, y) => { const h = pickAt(x, y); if (h && h.ch === B) { held = true; hand.classList.add("on"); hand.style.left = x + "px"; hand.style.top = y + "px"; } };
         sceneUp = () => { held = false; hand.classList.remove("on"); };
@@ -5700,7 +5709,7 @@
       const heartPt = (t, s, cx, cy, cz) => [cx + s * 16 * Math.pow(Math.sin(t), 3), cy + s * (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)), cz];
       async function gFireflies(w) {
         skyOverride = "night"; camTo([0.4, 3.3, 11.5], [0.4, 1.8, -2]); await w(1200);
-        const N = 7, lim = 25, t0 = T; let caught = 0; const flies = [];
+        const N = gA(D2(5, 9)), lim = lA(25), t0 = T; let caught = 0; const flies = [];
         for (let i = 0; i < N; i++) {
           const g = makeFly(rand(-1.6, 2.3), rand(0.9, 3.4), rand(-2.6, 0.6)), hit = gEl("", 0, 0, 72);
           const f = { g, hit, base: g.position.clone(), seed: rand(0, 6), state: "free" };
@@ -5724,29 +5733,29 @@
         skyOverride = "night"; B.walkTo(-0.85, 1.4); await A.walkTo(0.85, 1.4);
         for (const c of CHARS) { c.faceMode = "cam"; c.tsit = 1; c.headNod = -0.45; }
         camTo([0, 1.7, 12], [0, 5.4, -10]); await w(1500);
-        let caught = 0, spawned = 0;
-        while (caught < 4 && spawned < 12) {
-          spawned++; shootT = 0; ghOn(`🌠 ${caught} / 4 · үлдсэн од ${12 - spawned + 1}`);
+        let caught = 0, spawned = 0; const need = gA(D2(3, 5)), life = lerp(1.9, 1.25, lvl()) * (ASSIST ? 1.4 : 1);
+        while (caught < need && spawned < 12) {
+          spawned++; shootT = 0; ghOn(`🌠 ${caught} / ${need} · үлдсэн од ${12 - spawned + 1}`);
           const el = gEl("⭐", 0, 0, 76); el.style.filter = "drop-shadow(0 0 12px #fff6c0)";
           const x0 = rand(innerWidth * 0.55, innerWidth * 1.05), y0 = rand(innerHeight * 0.14, innerHeight * 0.32), t0 = T; let done = false;
           el.addEventListener("pointerdown", (e) => { e.stopPropagation(); if (done) return; done = true; caught++; for (let k = 0; k < 8; k++) fxAt({ x: e.clientX, y: e.clientY }, pick(["✨", "⭐", "💫"]), { dx: rand(-80, 80), dy: rand(-80, 80), size: rand(14, 24), delay: k * 30 }); chime(1046); buzz(20); el.remove(); });
-          while (!done) { const k = (T - t0) / 1.6; if (k >= 1) { done = true; el.remove(); break; } place(el, x0 - k * innerWidth * 0.6, y0 + k * innerHeight * 0.33, 76); el.style.opacity = Math.min(1, Math.sin(Math.PI * k) * 1.5); await w(16); }
+          while (!done) { const k = (T - t0) / life; if (k >= 1) { done = true; el.remove(); break; } place(el, x0 - k * innerWidth * 0.6, y0 + k * innerHeight * 0.33, 76); el.style.opacity = Math.min(1, Math.sin(Math.PI * k) * 1.5); await w(16); }
           await w(rand(400, 900));
         }
-        ghOn(`🌠 ${caught} / 4`);
-        return caught >= 4;
+        ghOn(`🌠 ${caught} / ${need}`);
+        return caught >= need;
       }
       // 12. 💃 хамт бүжиглэх (хэмнэлээр дарах)
       async function gDance(w) {
         for (const c of CHARS) { c.faceMode = "cam"; c.setEmo("happy"); }
-        const beat = 0.72, N = 16, goal = 9; let hits = 0, idx = 0;
+        const beat = lerp(0.8, 0.6, lvl()) * (ASSIST ? 1.15 : 1), N = 16, goal = gA(D2(7, 11)), win = ASSIST ? 0.28 : 0.2; let hits = 0, idx = 0;
         const btn = document.createElement("div"); btn.className = "beat gtap"; btn.textContent = "💖"; btn.style.transform = "none"; gw().appendChild(btn);
         const ring = document.createElement("div"); ring.className = "ring"; gw().appendChild(ring);
         const t0 = T + 0.6, beatAt = (i) => t0 + i * beat, judged = new Set();
         btn.addEventListener("pointerdown", (e) => {
           e.stopPropagation(); const i = Math.round((T - t0) / beat); if (i < 0 || i >= N || judged.has(i)) return;
           judged.add(i); const off = Math.abs(T - beatAt(i));
-          if (off < 0.2) { hits++; buzz(12); btn.animate([{ transform: "scale(1.25)" }, { transform: "scale(1)" }], { duration: 200 }); fxAt({ x: innerWidth / 2, y: innerHeight * 0.7 }, off < 0.09 ? "Төгс! ✨" : "Сайн! 💗", { size: 22, dy: -70, dx: rand(-40, 40) }); }
+          if (off < win) { hits++; buzz(12); btn.animate([{ transform: "scale(1.25)" }, { transform: "scale(1)" }], { duration: 200 }); fxAt({ x: innerWidth / 2, y: innerHeight * 0.7 }, off < 0.09 ? "Төгс! ✨" : "Сайн! 💗", { size: 22, dy: -70, dx: rand(-40, 40) }); }
           else fxAt({ x: innerWidth / 2, y: innerHeight * 0.7 }, "😅", { size: 22, dy: -50 });
         });
         danceMusic(true, beat * 500);
@@ -5761,18 +5770,18 @@
         return hits >= goal;
       }
       const CH = [
-        { id: "cookie", e: "🍪", t: "Күүки барих", d: "дэлгэц дээр дарж Б.Эрдэнийг хөдөлгөөд 8 күүки бариул", fn: gCookie },
-        { id: "mosquito", e: "🦟", t: "Шумуул алах", d: "Б.Эрдэнийг шумуулаас авраарай (7)", fn: gMosquito },
-        { id: "balloon", e: "🎈", t: "Бөмбөлөг хагалах", d: "16 секундэд 10 бөмбөлөг хагал", fn: gBalloon },
-        { id: "rps", e: "✊", t: "Хайч-чулуу", d: "Б.Эрдэнийг түрүүлж 3 удаа ял", fn: gRps },
-        { id: "riddle", e: "🧠", t: "Оньсого", d: "3 оньсогыг зөв таа", fn: gRiddle },
-        { id: "memory", e: "🃏", t: "Хос зураг", d: "6 хосыг олоорой", fn: gMemory },
-        { id: "shell", e: "🥤", t: "Шилийг ол", d: "Нуусан шилийг 2 удаа ол", fn: gShell },
-        { id: "tag", e: "🏃", t: "Барьж ав", d: "Гүйж буй Б.Эрдэнийг 8 удаа дар", fn: gTag },
-        { id: "shy", e: "😳", t: "Ичээх", d: "Б.Эрдэнийн толгойг удаан дарж илээрэй", fn: gShy },
-        { id: "fireflies", e: "✨", t: "Галт хорхой", d: "7 галт хорхойг бариарай", fn: gFireflies },
-        { id: "stars", e: "🌠", t: "Од барих", d: "Харвасан 4 одыг бариарай", fn: gStars },
-        { id: "dance", e: "💃", t: "Хамт бүжиглэ", d: "Зүрхийг хэмнэлээр нь дараарай", fn: gDance },
+        { id: "cookie", e: "🍪", t: "Күүки барих", d: "дэлгэц дээр дарж Б.Эрдэнийг гүйлгээд күүки бариул", h: "Күүки унаж байгаа газар руу урьдчилж дараарай. Одоо удаан унана 🍪", fn: gCookie },
+        { id: "mosquito", e: "🦟", t: "Шумуул алах", d: "Б.Эрдэнийг шумуулаас авраарай", h: "Шумуулууд миний толгойг тойрдог. Толгойн хажууд хүлээгээд дар 🦟", fn: gMosquito },
+        { id: "balloon", e: "🎈", t: "Бөмбөлөг хагалах", d: "дээшээ нисч буй бөмбөлгүүдийг хагал", h: "Доороос гарч ирэх үед нь дарах хамгийн амархан 🎈", fn: gBalloon },
+        { id: "rps", e: "✊", t: "Хайч-чулуу", d: "Б.Эрдэнийг түрүүлж ял", h: "Нууцыг чинь хэлье... би ихэвчлэн ✊ гаргадаг 🤫", fn: gRps },
+        { id: "riddle", e: "🧠", t: "Оньсого", d: "оньсогыг зөв таа", h: "Зөв хариулт дээр 👉 тэмдэг тавьчихлаа 😉", fn: gRiddle },
+        { id: "memory", e: "🃏", t: "Хос зураг", d: "6 хосыг олоорой", h: "Эхэнд бүх картыг үзүүлнэ, сайн цээжлээрэй 👀", fn: gMemory },
+        { id: "shell", e: "🥤", t: "Шилийг ол", d: "аяганы доор нуусан шилийг ол", h: "Одоо удаан сэлгэнэ. Шилтэй аягыг нүдээрээ дагаарай 🐢", fn: gShell },
+        { id: "tag", e: "🏃", t: "Барьж ав", d: "гүйж буй Б.Эрдэнийг дарж бариарай", h: "Намайг зогсох мөчид дар. Одоо удаан гүйнэ 😜", fn: gTag },
+        { id: "shy", e: "😳", t: "Ичээх", d: "Б.Эрдэнийн толгойг удаан дарж илээрэй", h: "Толгойг минь хуруугаараа дараад бай, бүү тавь 🫳", fn: gShy },
+        { id: "fireflies", e: "✨", t: "Галт хорхой", d: "галт хорхойнуудыг бариарай", h: "Гэрэлтэй цэгүүдийг нэг нэгээр нь дар. Хугацаа нэмчихлээ ✨", fn: gFireflies },
+        { id: "stars", e: "🌠", t: "Од барих", d: "харвасан одыг бариарай", h: "Од баруун дээд талаас гарч ирдэг. Тэнд хүлээж бай 🌠", fn: gStars },
+        { id: "dance", e: "💃", t: "Хамт бүжиглэ", d: "цагаан дугуй зүрхэн дээр ирэх мөчид дар", h: "Дугуй зүрхэн дээр хүрэх мөчид дар. Одоо удаан болгочихлоо 💃", fn: gDance },
       ];
       $("#chN").parentElement.innerHTML = `🎯 <b id="chN">0</b> / ${CH.length}<small>сорилт</small>`;
 
@@ -5781,7 +5790,9 @@
         if (busy && busy.important && busy.name !== "intro") return;
         markInteract(); sfx.pop();
         const c = CH.find((x) => x.id === id);
+        ASSIST = 0;
         skit("ch-" + id, async (w) => {
+          let passed = false;
           for (;;) {
             sceneOn(`${c.e} ${c.t}<small>${c.d}</small>`);
             await w(2300); showCap(null);
@@ -5790,20 +5801,88 @@
             sceneTap = sceneDown = sceneUp = null; sceneUpd = null; $("#gwrap").innerHTML = ""; danceMusic(false);
             if (ok) break;
             for (const ch of CHARS) { ch.tsit = 0; ch.pose("idle"); }
-            B.faceMode = "cam"; B.setEmo("sad"); await w(B.say(pick(["Ой, бараг л болох байсан! 😭", "Хэхэ, амаргүй биз? 😏", "Дахиад нэг оролдоод үз дээ 💪"]), "sad"));
             ghOff();
-            if ((await ask(w, ["🔁 Дахин оролдох", "Дараа"])) === 1) return;
+            G.fails[id] = (G.fails[id] || 0) + 1; save();
+            if (G.fails[id] >= 2 || (lvl() > 0.45 && G.fails[id] >= 1)) {
+              const r = await heroRescue(w, c);
+              if (r === "later") return;
+              if (r === "pass") { passed = true; break; }
+              if (r === "hint") ASSIST = 1;
+            } else {
+              B.faceMode = "cam"; B.setEmo("sad"); await w(B.say(pick(["Ой, бараг л болох байсан! 😭", "Хэхэ, амаргүй биз? 😏", "Дахиад нэг оролдоод үз дээ 💪"]), "sad"));
+              if ((await ask(w, ["🔁 Дахин оролдох", "Дараа"])) === 1) return;
+            }
             resetStage(); settle(1.8); await w(900);
           }
-          ghOff(); confetti(); sfx.level();
-          for (const ch of CHARS) { ch.tsit = 0; ch.faceMode = "cam"; ch.pose("cheer"); ch.hop(6); }
-          voc(B, "yay"); await w(B.say(pick(["Ёоо! Чи гайхалтай!! 🤩", "Яаж ийм сайн юм бэ?! 😆", "Ялчихлаа!! 🎉"]), "happy"));
+          ASSIST = 0; ghOff();
+          if (!passed) {
+            confetti(); sfx.level();
+            for (const ch of CHARS) { ch.tsit = 0; ch.faceMode = "cam"; ch.pose("cheer"); ch.hop(6); }
+            voc(B, "yay"); await w(B.say(pick(["Ёоо! Чи гайхалтай!! 🤩", "Яаж ийм сайн юм бэ?! 😆", "Ялчихлаа!! 🎉"]), "happy"));
+          }
           if (!G.done[id]) {
             G.done[id] = Date.now(); save(); renderHUD();
             await giftScene(w, doneCount() - 1);
             if (doneCount() >= CH.length && !G.finaleSeen) { await w(900); await finale(w); }
           }
         }, { important: true });
+      }
+
+      /* ═════════════════════════ 🦸‍♂️ Б.ЭРДЭНЭ ТУСЛАХААР НИСЧ ИРНЭ ═════════════════════════ */
+      const cape = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.95, 18, 1, true), new THREE.MeshToonMaterial({ color: new THREE.Color("#ff4f6b"), gradientMap, side: THREE.DoubleSide }));
+      cape.scale.set(1, 1, 0.45); cape.position.set(0, 0.6, -0.2); cape.visible = false; B.hips.add(cape);
+      const capeOutline = new THREE.Mesh(cape.geometry, outlineMat); capeOutline.scale.setScalar(1.04); cape.add(capeOutline);
+      async function heroRescue(w, c) {
+        for (const ch of CHARS) { ch.faceMode = "cam"; ch.pose("idle"); }
+        A.setEmo("sad"); await w(A.say(pick(["Хэцүү юм аа... 😣", "Яаж хийх юм бэ?! 😭", "Ахиад л болсонгүй 🥲"]), "sad"));
+        B.walkTo(-halfW - 2.5, 5); await w(800);
+        showCap("...гэнэт тэнгэрээс 🌟");
+        await w(900);
+        cape.visible = true; B.x = B.tx = 0; B.y = 7; B.vy = -3; B.faceMode = "cam"; B.pose("cheer"); B.setEmo("smug"); sfx.whoosh();
+        B.onLand = () => { sfx.boing(); B.squash(-7); buzz([30, 30]); const p = headScreen(B, -1); for (let k = 0; k < 12; k++) fxAt(p, pick(["⭐", "✨", "💥"]), { dx: rand(-140, 140), dy: rand(-120, 20), size: rand(18, 30), delay: k * 30 }); };
+        await w(1500); showCap(null);
+        B.pose("flex"); voc(B, "yay");
+        await w(B.say("🦸‍♂️ Санаа зоволтгүй, Б.Эрдэнэ ирлээ!", "smug"));
+        A.faceMode = "other"; A.setEmo("shocked"); fx(A, "😳");
+        await w(B.say("Би туслах уу? 😎", "cheerful"));
+        const a = await ask(w, ["💡 Сануулга өгөөч", "🦸‍♂️ Чи давж өгөөч", "🔁 Өөрөө дахиад", "Дараа"]);
+        if (a === 0) {
+          B.pose("point"); await w(B.say(`💡 ${c.h}`, "cheerful", Math.max(3200, c.h.length * 75)));
+          await w(B.say("Чи чадна! 💪", "happy")); cape.visible = false; return "hint";
+        }
+        if (a === 1) {
+          B.spinOnce(2, 0.8); fx(B, "⚡", 3); await w(B.say("Харж бай! 😎", "smug"));
+          showCap(`🦸‍♂️ ${c.e} ${c.t}...`);
+          for (let k = 0; k < 5; k++) { B.walkTo(rand(-1.3, 1.3), 5); B.hop(6); fx(B, pick(["💥", "✨", "⭐", c.e]), 2); sfx.pop(); await w(420); }
+          showCap(null); B.walkTo(-0.9, 3); await w(500);
+          B.pose("cheer"); confetti(); sfx.level(); await w(B.say("Та-даа! Давчихлаа 😎✨", "happy"));
+          await kissAsk(w);
+          cape.visible = false; return "pass";
+        }
+        cape.visible = false;
+        return a === 2 ? "retry" : "later";
+      }
+      async function kissAsk(w) {
+        const d = dirTo(A, B);
+        await A.walkTo(B.x - d * 1.25, 1.6);
+        B.faceMode = "look"; A.faceMode = "look"; B.pose("idle"); B.setEmo("shy"); B.headTilt = 0.15; fx(B, "😳");
+        await w(B.say("Гэхдээ... хөлс нь нэг үнсэлт шүү 😳👉👈", "shy"));
+        const k = await ask(w, ["💋 Үнсэх", "🙈 Ичиж байна"]);
+        if (k === 0) {
+          await A.walkTo(B.x - d * 0.62, 1.4);
+          A.faceMode = "look"; A.setEmo("shy"); A.headTilt = -0.25 * d; await w(450);
+          voc(A, "mwah"); fx(B, "💋", 1, { size: 44, dy: -40 }); sfx.sparkle(); buzz([30, 40]);
+          B.setEmo("love"); hearts(14); await w(800);
+          A.walkTo(B.x - d * 1.2, 2);
+          B.tfallen = 1; B.setEmo("dizzy"); fx(B, "💫", 3); voc(B, "woozy");
+          await w(B.say("...би зүгээр ээ... 😵‍💫💕", "dizzy"));
+          A.faceMode = "cam"; voc(A, "giggle"); await w(A.say("Хи хи хи 😆", "happy"));
+          B.tfallen = 0; await w(500); B.hop(7); B.pose("cheer"); await w(B.say("Хамгийн сайхан хөлс! 🥰", "love"));
+        } else {
+          A.setEmo("shy"); A.pose("shy"); await w(A.say("Д-дараа... 🙈", "shy"));
+          A.pose("idle"); B.setEmo("smug"); await w(B.say("Хэхэ, тэгвэл зээлээр бичлээ 😏📝", "smug"));
+        }
+        B.headTilt = 0; A.headTilt = 0;
       }
 
       /* ═════════════════════════ 🎁 БЭЛГИЙН ХАЙРЦАГ ═════════════════════════ */
@@ -6151,6 +6230,7 @@
         updEnv(dt); updTweens(); updChar(B, dt); updChar(A, dt); updPet(dt); updFireworks(dt);
         if (tree.userData.shake) { const e = T - tree.userData.shake; tree.rotation.z = Math.sin(e * 28) * 0.07 * Math.exp(-e * 3); if (e > 2) { tree.userData.shake = 0; tree.rotation.z = 0; } }
         if (sceneUpd) sceneUpd(dt);
+        if (cape.visible) cape.rotation.x = 0.2 + Math.sin(T * 9) * 0.1 + (B.walking ? 0.35 : 0);
         updIdle();
         if (INTRO.on) updIntro(dt); else updCam(dt);
         sky.position.copy(camera.position); stars.position.copy(camera.position); moon.position.copy(camera.position).add(moonOff);
